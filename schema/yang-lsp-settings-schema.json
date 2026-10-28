@@ -29,6 +29,16 @@
       "type": "string",
       "default": ""
     },
+    "extensionSchemaNodes": {
+      "description": "Maps YANG extensions, written as '<module-name>:<extension-name>', to the kind of schema node their statements define, e.g. NSO's 'tailf-common:action'.",
+      "type": "object",
+      "additionalProperties": {
+        "enum": [
+          "action"
+        ]
+      },
+      "default": {}
+    },
     "extension": {
       "description": "YANG LSP extension settings",
       "type": "object",

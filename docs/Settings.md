@@ -65,6 +65,30 @@ You can specify individual files, directories (contents will be added
 recursively) or ZIP files. The file name format is OS specific, and so is the
 path separator (`;` on Windows, `:` elsewhere).
 
+## Extension Schema Nodes
+
+Some vendors define schema nodes through YANG extensions, for instance NSO's
+`tailf:action`. Without further information these statements are not schema
+nodes, so the contents of different extension statements collide with each
+other and `refine` or `augment` statements cannot target them. Use
+`extensionSchemaNodes` to declare which kind of schema node an extension
+defines:
+
+```json
+{
+  "extensionSchemaNodes": {
+    "tailf-common:action": "action"
+  }
+}
+```
+
+Keys are `<module-name>:<extension-name>`, using the name of the module that
+defines the extension rather than an import prefix. The statement's argument is
+the node name. The only supported kind is `action`: the node gets its own
+`input` and `output`, and it can be the target of `refine` and `augment`.
+Navigation from such a `refine` or `augment` to the extension statement is not
+supported.
+
 ## Extensions
 
 The settings is used to register an extension. Please find the details [here][4].

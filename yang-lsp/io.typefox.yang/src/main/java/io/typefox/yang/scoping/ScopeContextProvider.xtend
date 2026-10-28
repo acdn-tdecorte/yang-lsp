@@ -4,6 +4,7 @@ import com.google.common.collect.LinkedHashMultimap
 import com.google.inject.Inject
 import io.typefox.yang.scoping.ScopeContext.MapScope
 import io.typefox.yang.scoping.xpath.XpathResolver
+import io.typefox.yang.settings.PreferenceValuesProvider
 import io.typefox.yang.utils.YangExtensions
 import io.typefox.yang.utils.YangPathProvider
 import io.typefox.yang.validation.IssueCodes
@@ -57,6 +58,7 @@ import org.eclipse.emf.ecore.util.EcoreUtil
 import org.eclipse.xtend.lib.annotations.Data
 import org.eclipse.xtext.EcoreUtil2
 import org.eclipse.xtext.naming.QualifiedName
+import org.eclipse.xtext.preferences.PreferenceKey
 import org.eclipse.xtext.resource.EObjectDescription
 import org.eclipse.xtext.resource.IEObjectDescription
 import org.eclipse.xtext.resource.impl.ResourceDescriptionsData
@@ -99,6 +101,16 @@ class ScopeContextProvider {
 	@Inject extension YangExtensions
 	@Inject XpathResolver xpathResolver
 	@Inject YangPathProvider yangPathProvider
+	@Inject PreferenceValuesProvider preferenceProvider
+	
+	/**
+	 * Settings prefix mapping an extension, written as '<module-name>:<extension-name>',
+	 * to the kind of schema node its statements define, e.g.
+	 * <code>"extensionSchemaNodes": { "tailf-common:action": "action" }</code>.
+	 * Only the kind 'action' is supported.
+	 */
+	public static val EXTENSION_SCHEMA_NODES = 'extensionSchemaNodes'
+	static val EXTENSION_KIND_ACTION = 'action'
 	
 	def IScopeContext findScopeContext(EObject node) {
 		val module = EcoreUtil2.getContainerOfType(node, AbstractModule)
@@ -224,7 +236,12 @@ class ScopeContextProvider {
 		val qn = identifier.internalGetQualifiedName(nodePath, context)
 		linker.link(identifier, YangPackage.Literals.SCHEMA_NODE_IDENTIFIER__SCHEMA_NODE) [
 			val element = context.schemaNodeScope.getSingleElement(qn)
-			if(element !== null) {
+			if (element !== null) {
+				// Extension-defined schema nodes are not SchemaNode instances and cannot be
+				// the target of a typed link; accept them as resolved instead.
+				if (element.EClass === UNKNOWN) {
+					return Linker.ROOT
+				}
 				return element
 			}
 		]
@@ -318,6 +335,19 @@ class ScopeContextProvider {
 		}
 		for (subStmnt : statement.substatements) {
 			inlineGrouping(subStmnt, newPath, context, newIsConfig)
+		}
+	}
+	
+	private def dispatch void inlineGrouping(Unknown statement, QualifiedName name, GroupingInliningScopeContext context, boolean isConfig) {
+		if (!statement.isActionExtension) {
+			return
+		}
+		val newPath = getQualifiedName(statement, name, context)
+		if (newPath != name) {
+			statement.addToNodeScope(newPath, context, isConfig)
+		}
+		for (subStmnt : statement.substatements) {
+			inlineGrouping(subStmnt, newPath, context, isConfig)
 		}
 	}
 	
@@ -688,6 +718,56 @@ class ScopeContextProvider {
 			}
 		}
 		return result
+	}
+	
+	private def dispatch QualifiedName getQualifiedName(Unknown node, QualifiedName p, IScopeContext ctx) {
+		if (node.name === null || !node.isActionExtension) {
+			return p
+		}
+		val result = p.append(ctx.moduleName).append(node.name)
+		// add implicit input / output if they do not exist (see RFC 7950 7.15)
+		if (!node.substatements.exists[it instanceof Input]) {
+			node.addToNodeScope(result.append(ctx.moduleName).append('input'), ctx, true)
+		}
+		if (!node.substatements.exists[it instanceof Output]) {
+			node.addToNodeScope(result.append(ctx.moduleName).append('output'), ctx, true)
+		}
+		return result
+	}
+	
+	private def boolean isActionExtension(Unknown node) {
+		val extensionName = node.extensionQualifiedName
+		if (extensionName === null) {
+			return false
+		}
+		val key = new PreferenceKey(EXTENSION_SCHEMA_NODES + '.' + extensionName, '')
+		val kind = preferenceProvider.getPreferenceValues(node.eResource).getPreference(key)
+		return kind == EXTENSION_KIND_ACTION
+	}
+	
+	/**
+	 * Returns '<module-name>:<extension-name>' for the extension keyword of the statement,
+	 * resolving the prefix through the imports of the module that contains the statement.
+	 */
+	private def String getExtensionQualifiedName(Unknown node) {
+		val keyword = linker.getLinkingName(node, UNKNOWN__EXTENSION)
+		val module = node.getContainerOfType(AbstractModule)
+		if (keyword === null || module === null) {
+			return null
+		}
+		val extensionModule = if (keyword.segmentCount == 1 || keyword.firstSegment == module.prefix) {
+			(module.mainModule ?: module).name
+		} else {
+			val extensionImport = module.substatements.filter(Import).findFirst[prefix == keyword.firstSegment]
+			if (extensionImport === null) {
+				return null
+			}
+			linker.getLinkingName(extensionImport, ABSTRACT_IMPORT__MODULE)?.lastSegment
+		}
+		if (extensionModule === null) {
+			return null
+		}
+		return extensionModule + ':' + keyword.lastSegment
 	}
 	
 	private def dispatch QualifiedName getQualifiedName(Augment node, QualifiedName p, IScopeContext ctx) {

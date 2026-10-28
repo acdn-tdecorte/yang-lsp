@@ -1,0 +1,5 @@
+{
+	"extensionSchemaNodes" : {
+		"ext:action" : "action"
+	}
+}
